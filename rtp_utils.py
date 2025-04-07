@@ -54,6 +54,7 @@ class RTPSender:
         self.sequence_number = random.randint(0, 65535)
         self.timestamp = 0
         self.packet_count = 0
+        self.octet_count = 0
     
     def send_packet(self, payload, marker=0):
         """Send RTP packet with payload"""
@@ -68,6 +69,7 @@ class RTPSender:
         self.sequence_number += 1
         self.timestamp += len(payload)  # Assuming 8kHz sample rate
         self.packet_count += 1
+        self.octet_count += len(payload)
         
         # Send RTCP SR every 20 packets
         if self.packet_count % 20 == 0:
@@ -75,29 +77,29 @@ class RTPSender:
     
     def send_rtcp_report(self):
         """Send simple RTCP Sender Report"""
-        # Very basic RTCP SR implementation
         version = 2
         padding = 0
         rc = 0  # reception report count
         packet_type = 200  # SR
         length = 6  # in 32-bit words - 1
         ssrc = self.rtp_packet.ssrc
-        ntp_timestamp = int(time.time()) << 32
-        rtp_timestamp = self.timestamp
-        packet_count = self.packet_count
-        octet_count = self.timestamp  # Approximation
+        
+        # Get NTP timestamp (simplified)
+        ntp_time = time.time()
+        ntp_sec = int(ntp_time)
+        ntp_frac = int((ntp_time - ntp_sec) * 4294967296)  # 2^32
         
         rtcp_packet = struct.pack(
-            '!BBHIIIII',
+            '!BBHIIIIII',
             (version << 6) | (padding << 5) | rc,
             packet_type,
             length,
             ssrc,
-            ntp_timestamp >> 32,
-            ntp_timestamp & 0xFFFFFFFF,
-            rtp_timestamp,
-            packet_count,
-            octet_count
+            ntp_sec + 2208988800,  # Convert to NTP epoch (1900-1970)
+            ntp_frac,
+            self.timestamp,
+            self.packet_count,
+            self.octet_count
         )
         
         self.rtp_socket.sendto(rtcp_packet, (self.remote_ip, self.remote_port + 1))
