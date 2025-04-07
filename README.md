@@ -1,20 +1,22 @@
 # Real-Time Audio Streaming over IP
 
-This project implements a simple VoIP system using SIP for signaling and RTP for audio transport between two clients.
+This project demonstrates a simple SIP (Session Initiation Protocol) client-server implementation with RTP (Real-time Transport Protocol) for audio streaming.
 
 ## Requirements
 
-- Python 3.x
-- PyAudio (`pip install pyaudio`)
+- Java Development Kit (JDK) installed
+- Two separate terminal windows or tabs
 - WAV audio file for testing
 
 ## How to Run
 
 1. Open two terminal windows
-2. In the first terminal (Client 2 - receiver):
+2. **Compile the source files**:
    ```bash
-   python client2.py <local_ip> <local_port> <remote_ip> <remote_port>
-   then click listen
-3. In the 2nd terminal (Client 1 - sender)
+   javac SIPServer.java SIPClient.java
+3. In the first terminal:
    ```bash
-   python client1.py <local_ip> <local_port> <remote_ip> <remote_port>
+   java SIPServer
+4. In the 2nd terminal (Client 2 - receiver)
+   ```bash
+   java SIPClient
