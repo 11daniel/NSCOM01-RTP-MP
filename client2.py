@@ -6,7 +6,6 @@ from sip_utils import SIPClient
 from rtp_utils import RTPReceiver
 from audio_utils import AudioPlayer
 import threading
-import socket
 
 class VoIPReceiverGUI:
     def __init__(self, root, local_ip, local_port, remote_ip, remote_port):
@@ -16,9 +15,6 @@ class VoIPReceiverGUI:
         self.remote_ip = remote_ip
         self.remote_port = remote_port
         self.running = False
-        self.audio_player = None
-        self.sip_client = None
-        self.rtp_receiver = None
         
         self.setup_gui()
         
@@ -57,137 +53,135 @@ class VoIPReceiverGUI:
             print(f"\nStarting Client 2 (Receiver) on {self.local_ip}:{self.local_port}")
             print(f"Expecting Client 1 at {self.remote_ip}:{self.remote_port}\n")
 
-            # Initialize SIP client with timeout
-            self.sip_client = SIPClient(self.local_ip, self.local_port + 100, 
-                                      self.remote_ip, self.remote_port + 100)
-            self.sip_client.sip_socket.settimeout(0.5)
+            # Initialize SIP client
+            sip_client = SIPClient(self.local_ip, self.local_port + 100, 
+                                 self.remote_ip, self.remote_port + 100)
             
             # Wait for INVITE
             print("[SIP] Waiting for INVITE...")
             while self.running:
-                try:
-                    invite = self.sip_client.receive_message()
-                    if invite and b"INVITE" in invite:
-                        print(f"[SIP] Received INVITE")
-                        break
-                except socket.timeout:
-                    continue
+                invite = sip_client.receive_message()
+                if invite:
+                    print(f"[SIP] Received message:\n{invite.decode()[:500]}...")
+                    break
+                time.sleep(0.1)
             
             if not self.running:
                 return
 
-            # Process INVITE and send 200 OK
+            if b"INVITE" not in invite:
+                print("[SIP] Received message is not an INVITE")
+                self.status_var.set("Invalid call received")
+                return
+
+            # Parse the INVITE
+            try:
+                invite_lines = invite.decode().split('\r\n')
+                via_header = next(line for line in invite_lines if line.lower().startswith('via:'))
+                from_header = next(line for line in invite_lines if line.lower().startswith('from:'))
+                call_id = next(line for line in invite_lines if line.lower().startswith('call-id:'))
+                cseq = next(line for line in invite_lines if line.lower().startswith('cseq:'))
+            except StopIteration:
+                print("[SIP] Malformed INVITE - missing required headers")
+                self.status_var.set("Malformed call received")
+                return
+
+            # Send 200 OK with SDP
             rtp_port = self.local_port
-            ok_response = f"""SIP/2.0 200 OK
-Content-Type: application/sdp
-Content-Length: 122
-
-v=0
-o=- 123456 0 IN IP4 {self.local_ip}
-s=VoIP Call
-c=IN IP4 {self.local_ip}
-t=0 0
-m=audio {rtp_port} RTP/AVP 0
-a=rtpmap:0 PCMU/8000"""
-            self.sip_client.send_message(ok_response.encode())
-
+            sdp_response = (
+                "v=0\r\n"
+                f"o=- {sip_client.call_id} 0 IN IP4 {self.local_ip}\r\n"
+                "s=VoIP Call\r\n"
+                f"c=IN IP4 {self.local_ip}\r\n"
+                "t=0 0\r\n"
+                f"m=audio {rtp_port} RTP/AVP 0\r\n"
+                "a=rtpmap:0 PCMU/8000\r\n"
+            )
+            
+            ok_response = (
+                "SIP/2.0 200 OK\r\n"
+                f"{via_header}\r\n"
+                f"{from_header};tag={sip_client.tag}\r\n"
+                f"To: <sip:user@{self.local_ip}>;tag={sip_client.tag}\r\n"
+                f"{call_id}\r\n"
+                f"{cseq}\r\n"
+                "Contact: <sip:user@{}:{}>\r\n".format(self.local_ip, self.local_port + 100) +
+                "Content-Type: application/sdp\r\n"
+                "Content-Length: {}\r\n\r\n".format(len(sdp_response)) +
+                sdp_response
+            )
+            
+            print("[SIP] Sending 200 OK response:")
+            sip_client.send_message(ok_response)
+            
             # Wait for ACK
             print("[SIP] Waiting for ACK...")
             while self.running:
-                try:
-                    ack = self.sip_client.receive_message()
-                    if ack and b"ACK" in ack:
-                        print(f"[SIP] Received ACK")
-                        break
-                except socket.timeout:
-                    continue
+                ack = sip_client.receive_message()
+                if ack:
+                    print(f"[SIP] Received ACK:\n{ack.decode()[:500]}...")
+                    break
+                time.sleep(0.1)
+            
+            if not self.running:
+                return
 
-            # Initialize audio player
-            self.audio_player = AudioPlayer()
+            # Initialize audio player and RTP receiver
+            audio_player = AudioPlayer()
             print(f"[RTP] Initializing RTP receiver on port {rtp_port}")
             self.status_var.set("Receiving audio...")
-
-            # Initialize RTP receiver
-            self.rtp_receiver = RTPReceiver(self.local_ip, rtp_port)
-            self.rtp_receiver.rtp_socket.settimeout(0.5)
-
-            def callback(payload, *_):
+            
+            def rtp_callback(payload, timestamp, seq_num, ssrc):
                 if payload and self.running:
                     try:
-                        self.audio_player.play_audio(payload)
+                        audio_player.play_audio(payload)
                     except Exception as e:
                         print(f"[AUDIO] Playback error: {e}")
-                        self.cleanup()
 
-            # Main receive loop
-            while self.running:
-                try:
-                    self.rtp_receiver.receive_packets(callback)
-                except socket.timeout:
-                    continue
-                except OSError:
-                    break  # Socket closed
-
+            rtp_receiver = RTPReceiver(self.local_ip, rtp_port)
+            rtp_receiver.receive_packets(rtp_callback)
+            
             # Wait for BYE
             print("[SIP] Waiting for BYE...")
             while self.running:
-                try:
-                    bye = self.sip_client.receive_message()
-                    if bye and b"BYE" in bye:
-                        print(f"[SIP] Received BYE")
-                        # Send 200 OK to BYE
-                        ok_response = "SIP/2.0 200 OK\r\nContent-Length: 0\r\n\r\n"
-                        self.sip_client.send_message(ok_response.encode())
-                        self.status_var.set("Call ended normally")
-                        break
-                except socket.timeout:
-                    continue
-
+                bye = sip_client.receive_message()
+                if bye:
+                    print(f"[SIP] Received BYE:\n{bye.decode()[:500]}...")
+                    # Send 200 OK to BYE
+                    ok_response = (
+                        "SIP/2.0 200 OK\r\n"
+                        f"{via_header}\r\n"
+                        f"{from_header};tag={sip_client.tag}\r\n"
+                        f"To: <sip:user@{self.local_ip}>;tag={sip_client.tag}\r\n"
+                        f"{call_id}\r\n"
+                        f"{cseq}\r\n"
+                        "Content-Length: 0\r\n\r\n"
+                    )
+                    sip_client.send_message(ok_response)
+                    print("[SIP] Sent 200 OK to BYE")
+                    break
+                time.sleep(0.1)
+            
+            if self.running:
+                self.status_var.set("Call ended by remote")
+            
         except Exception as e:
             print(f"\n[ERROR] Fatal error: {e}")
             self.status_var.set(f"Error: {str(e)}")
         finally:
-            self.cleanup()
-    
-    def cleanup(self):
-        """Clean up resources safely"""
-        self.running = False
-        
-        # Close RTP receiver
-        if hasattr(self, 'rtp_receiver') and self.rtp_receiver:
+            self.running = False
+            self.root.after(100, lambda: self.stop_btn.config(state=tk.DISABLED))
+            self.root.after(100, lambda: self.play_btn.config(state=tk.NORMAL))
             try:
-                self.rtp_receiver.stop()
-            except Exception as e:
-                print(f"Error stopping RTP receiver: {e}")
-
-        # Close SIP client
-        if hasattr(self, 'sip_client') and self.sip_client:
-            try:
-                self.sip_client.sip_socket.close()
-            except Exception as e:
-                print(f"Error closing SIP socket: {e}")
-
-        # Close audio player
-        if hasattr(self, 'audio_player') and self.audio_player:
-            try:
-                self.audio_player.close()
-            except Exception as e:
-                print(f"Error closing audio player: {e}")
-
-        # Reset UI
-        self.root.after(100, lambda: [
-            self.stop_btn.config(state=tk.DISABLED),
-            self.play_btn.config(state=tk.NORMAL),
-            self.status_var.set("Ready")
-        ])
+                audio_player.close()
+            except:
+                pass
     
     def stop_receiving(self):
-        """Stop the receiver immediately"""
         self.status_var.set("Stopping...")
-        self.cleanup()
+        self.running = False
     
     def on_close(self):
-        """Handle window close event"""
         self.stop_receiving()
         self.root.destroy()
 
