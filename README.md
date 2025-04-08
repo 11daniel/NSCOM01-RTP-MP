@@ -13,19 +13,22 @@ A simple VoIP implementation using SIP for signaling and RTP for audio transmiss
 You'll need one for the sender and one for the receiver.
 
 ### 2. Run the sender (Client 1)
+```
 python client1.py <local_ip> <local_port> <remote_ip> <remote_port>
-
+```
 Example for local testing:
+```
 python client1.py 127.0.0.1 6000 127.0.0.1 6002
-
+```
 
 ### 3. Run the receiver (Client 2)
+```
 python client2.py <local_ip> <local_port> <remote_ip> <remote_port>
-
+```
 Example matching the sender:
+```
 python client2.py 127.0.0.1 6002 127.0.0.1 6000
-
-
+```
 ### 4. Using the GUI Applications
 
 #### Sender (Client 1):
@@ -83,11 +86,11 @@ Test audio playback (verify pyaudio works):
 import pyaudio
 p = pyaudio.PyAudio()
 p.terminate()
+```
 Verify Python version:
-
-
 python --version
-Known Limitations
+
+###Known Limitations
 Only supports WAV files with specific format (16-bit PCM, 8000Hz)
 
 No encryption of audio streams
