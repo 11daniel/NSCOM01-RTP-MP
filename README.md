@@ -90,13 +90,13 @@ p.terminate()
 Verify Python version:
 python --version
 
-###Known Limitations
+### Known Limitations
+
 Only supports WAV files with specific format (16-bit PCM, 8000Hz)
 
 No encryption of audio streams
 
 Basic error recovery only
 
-
-
+---
 This README provides clear instructions for running the application, explains its features, and includes troubleshooting tips. You may want to adjust the port numbers or add specific notes about your testing environment as needed.
